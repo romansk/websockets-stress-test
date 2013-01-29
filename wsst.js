@@ -38,6 +38,156 @@ var
     multipleTest,
     writeJson;
 
+
+/**
+ * Actual test worker
+ *
+ */
+
+worker = function( url, scenario, connections, cli, index ) {
+	var api;
+
+	connections[index] = {
+		socket:      new WebSocket(url),
+		checkpoints: []
+	};
+
+	api = {
+		/**
+		* Create checkpoint in scenario
+		*
+		* @param text
+		*/
+		checkpoint: function (text) {
+			var time = (new Date()).getTime(), count;
+
+			count = connections[index].checkpoints.length;
+
+			if (count > 0) {
+				connections[index].checkpoints[count - 1].end = time;
+				connections[index].checkpoints[count - 1].total = time;
+				connections[index].checkpoints[count - 1].total -= connections[index].checkpoints[count - 1].start;
+			}
+
+			connections[index].checkpoints.push({
+				text:   text,
+				start:  time,
+				end:    time,
+				total:  0
+			});
+
+			cli.debug('Checkpoint: ' + text);
+		}
+	};	//api
+
+	connections[index].socket.on('open', function () {
+		countOpened++;
+
+		// Add default checkpoint when connection opens
+		api.checkpoint('Connection opened');
+
+		// And run scenario on this connection
+		scenario.init(connections[index].socket, api);
+	});
+
+	connections[index].socket.on('close', function () {
+		var i, j, result, connectionTime;
+
+		// Add default checkoint when connection closed
+		api.checkpoint('Connection closed');
+		countOpened--;
+
+		// If we haven't any another connections
+		if (countOpened === 0) {
+			// Save test end time
+			endTime = (new Date()).getTime();
+
+			// Prepare result
+			result = {
+				connections:  countConnections,
+				scenarioName: scenarioName,
+				url:          url,
+				total:        (endTime - startTime),
+				avg:          0,
+				min:          null,
+				max:          null,
+				checkpoints:  []
+			};
+
+			for (i in connections) {
+				// Calculate total connection time
+				connectionTime = connections[i].checkpoints[connections[i].checkpoints.length-1].end - connections[i].checkpoints[0].start;
+
+				result.avg += connectionTime;
+
+				if (connectionTime < result.min || result.min === null) {
+					result.min = connectionTime;
+				}
+
+				if (connectionTime > result.max || result.max === null) {
+					result.max = connectionTime;
+				}
+
+				// And now for every checkpoint
+				for (j in connections[i].checkpoints) {
+					if (!result.checkpoints[j]) {
+						result.checkpoints[j] = {
+							text: connections[i].checkpoints[j].text,
+							avg:  0,
+							min:  null,
+							max:  null
+						};
+					}
+
+					result.checkpoints[j].avg += connections[i].checkpoints[j].total;
+
+					if (result.checkpoints[j].min > connections[i].checkpoints[j].total || result.checkpoints[j].min === null) {
+						result.checkpoints[j].min = connections[i].checkpoints[j].total;
+					}
+
+					if (result.checkpoints[j].max < connections[i].checkpoints[j].total || result.checkpoints[j].max === null) {
+						result.checkpoints[j].max = connections[i].checkpoints[j].total;
+					}
+				}
+			}
+
+			result.avg /= countConnections;
+			for (j in result.checkpoints) {
+				result.checkpoints[j].avg /= countConnections;
+			}
+
+			cli.ok('');
+			cli.ok('Test completed!');
+			cli.ok('--------------------------------------------------');
+			cli.ok('Total test time:             ' + result.total + ' ms.');
+			cli.ok('Average time per connection: ' + result.avg + ' ms.');
+			cli.ok('Minimum connection time:     ' + result.min + ' ms.');
+			cli.ok('Maximum connection time:     ' + result.max + ' ms.');
+			cli.ok('--------------------------------------------------\n');
+
+			cli.ok('Time profiler:');
+			cli.ok('----------------------------------------------------------------------------------');
+			cli.ok('| #\t| Average\t| Minimum\t| Maximum\t| Name')
+			cli.ok('----------------------------------------------------------------------------------');
+			for (j in result.checkpoints) {
+				cli.ok('| ' + j + '\t| '
+					+ result.checkpoints[j].avg + '\t\t| '
+					+ result.checkpoints[j].min + '\t\t| '
+					+ result.checkpoints[j].max + '\t\t| '
+					+ result.checkpoints[j].text);
+			}
+
+			cli.ok('----------------------------------------------------------------------------------');
+
+			if (typeof callback === 'function') {
+				callback.call(cli, result);
+			}
+		}
+	});
+        
+}
+
+
 /**
  * Run single test for given scenario on given URL.
  *
@@ -49,7 +199,7 @@ var
  * @param cli
  * @param callback
  */
-test = function (webSocketUrl, scenarioName, countConnections, cli, callback) {
+test = function (webSocketUrl, scenarioName, countConnections, delay, cli, callback) {
     var
         i,
         startTime   = (new Date()).getTime(),
@@ -65,147 +215,7 @@ test = function (webSocketUrl, scenarioName, countConnections, cli, callback) {
     cli.info('Starting test for ' + countConnections + ' connections...');
 
     for (i=0; i<countConnections; i++) {
-        (function(index) {
-            var api;
-
-            connections[index] = {
-                socket:      new WebSocket(url),
-                checkpoints: []
-            };
-
-            api = {
-                /**
-                 * Create checkpoint in scenario
-                 *
-                 * @param text
-                 */
-                checkpoint: function (text) {
-                    var time = (new Date()).getTime(), count;
-
-                    count = connections[index].checkpoints.length;
-
-                    if (count > 0) {
-                        connections[index].checkpoints[count - 1].end = time;
-                        connections[index].checkpoints[count - 1].total = time;
-                        connections[index].checkpoints[count - 1].total -= connections[index].checkpoints[count - 1].start;
-                    }
-
-                    connections[index].checkpoints.push({
-                        text:   text,
-                        start:  time,
-                        end:    time,
-                        total:  0
-                    });
-
-                    cli.debug('Checkpoint: ' + text);
-                }
-            };
-
-            connections[index].socket.on('open', function () {
-                countOpened++;
-
-                // Add default checkpoint when connection opens
-                api.checkpoint('Connection opened');
-
-                // And run scenario on this connection
-                scenario.init(connections[index].socket, api);
-            });
-
-            connections[index].socket.on('close', function () {
-                var i, j, result, connectionTime;
-
-                // Add default checkoint when connection closed
-                api.checkpoint('Connection closed');
-                countOpened--;
-
-                // If we haven't any another connections
-                if (countOpened === 0) {
-                    // Save test end time
-                    endTime = (new Date()).getTime();
-
-                    // Prepare result
-                    result = {
-                        connections:  countConnections,
-                        scenarioName: scenarioName,
-                        url:          url,
-                        total:        (endTime - startTime),
-                        avg:          0,
-                        min:          null,
-                        max:          null,
-                        checkpoints:  []
-                    };
-
-                    for (i in connections) {
-                        // Calculate total connection time
-                        connectionTime = connections[i].checkpoints[connections[i].checkpoints.length-1].end - connections[i].checkpoints[0].start;
-
-                        result.avg += connectionTime;
-
-                        if (connectionTime < result.min || result.min === null) {
-                            result.min = connectionTime;
-                        }
-
-                        if (connectionTime > result.max || result.max === null) {
-                            result.max = connectionTime;
-                        }
-
-                        // And now for every checkpoint
-                        for (j in connections[i].checkpoints) {
-                            if (!result.checkpoints[j]) {
-                                result.checkpoints[j] = {
-                                    text: connections[i].checkpoints[j].text,
-                                    avg:  0,
-                                    min:  null,
-                                    max:  null
-                                };
-                            }
-
-                            result.checkpoints[j].avg += connections[i].checkpoints[j].total;
-
-                            if (result.checkpoints[j].min > connections[i].checkpoints[j].total || result.checkpoints[j].min === null) {
-                                result.checkpoints[j].min = connections[i].checkpoints[j].total;
-                            }
-
-                            if (result.checkpoints[j].max < connections[i].checkpoints[j].total || result.checkpoints[j].max === null) {
-                                result.checkpoints[j].max = connections[i].checkpoints[j].total;
-                            }
-                        }
-                    }
-
-                    result.avg /= countConnections;
-                    for (j in result.checkpoints) {
-                        result.checkpoints[j].avg /= countConnections;
-                    }
-
-                    cli.ok('');
-                    cli.ok('Test completed!');
-                    cli.ok('--------------------------------------------------');
-                    cli.ok('Total test time:             ' + result.total + ' ms.');
-                    cli.ok('Average time per connection: ' + result.avg + ' ms.');
-                    cli.ok('Minimum connection time:     ' + result.min + ' ms.');
-                    cli.ok('Maximum connection time:     ' + result.max + ' ms.');
-                    cli.ok('--------------------------------------------------\n');
-
-                    cli.ok('Time profiler:');
-                    cli.ok('----------------------------------------------------------------------------------');
-                    cli.ok('| #\t| Average\t| Minimum\t| Maximum\t| Name')
-                    cli.ok('----------------------------------------------------------------------------------');
-                    for (j in result.checkpoints) {
-                        cli.ok('| ' + j + '\t| '
-                            + result.checkpoints[j].avg + '\t\t| '
-                            + result.checkpoints[j].min + '\t\t| '
-                            + result.checkpoints[j].max + '\t\t| '
-                            + result.checkpoints[j].text);
-                    }
-
-                    cli.ok('----------------------------------------------------------------------------------');
-
-                    if (typeof callback === 'function') {
-                        callback.call(cli, result);
-                    }
-                }
-            });
-        })(i);
+		setTimeout( worker( url, scenario, connections, cli, i ), i*delay);		
     }
 };
 
@@ -273,13 +283,13 @@ cli.main(function (args, options) {
     if (options.connectionsList) {
         connections = options.connectionsList.split(',');
 
-        multipleTest(args[0], args[1], connections, cli, function (result) {
+        multipleTest(args[0], args[1], connections,  options.delay, cli, function (result) {
             if (options.output) {
                 writeJson(result);
             }
         });
     } else {
-        test(args[0], args[1], options.connections, cli, function (result) {
+        test(args[0], args[1], options.connections, options.delay, cli, function (result) {
             if (options.output) {
                 writeJson([result]);
             }
