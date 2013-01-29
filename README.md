@@ -19,7 +19,7 @@ Useful to avoid "mass testing" when connecting to ws:// server
 
 Example
 --------
-node wsst.js -c 10 ws://thevideocafe.com:8082 example/myScenario.js
+node wsst.js -c 10 ws://myserver.com:8082 example/myScenario.js
 
 
 
