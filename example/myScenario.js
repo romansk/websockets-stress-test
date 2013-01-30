@@ -24,6 +24,15 @@ exports.init = function (ws, api) {
 
     });
 
+	ws.on('uncaughtException', function(err) {
+  		console.log( "uE: " + err);
+	});
+
+	ws.on('error', function(err) {
+  		console.log( "error: " + err);
+	});
+
+
 	var msg = { 'command': 'test', 'value': '1' } ;
 	try {
 		ws.send( JSON.stringify(msg) );
